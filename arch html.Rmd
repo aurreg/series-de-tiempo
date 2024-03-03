@@ -1,0 +1,113 @@
+---
+title: "arch log"
+output: html_document
+date: "2022-12-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r Importación de datos y creación de objetos}
+library(readr)
+library(dygraphs)
+Datos_históricos_Bitcoin <- read_csv("C:\\Users\\PC1\\Downloads\\Histórico del Bitcoin (BTC).csv", col_types = cols(`ï»¿"Fecha"` = col_date(format = "%d.%m.%Y")),locale = locale(decimal_mark = ","))
+
+
+Fecha<-Datos_históricos_Bitcoin$`ï»¿"Fecha"`
+ntrain=trunc(length(Fecha))
+AperturaBitcoin<-rev(Datos_históricos_Bitcoin$Apertura)
+AperturaBitcoin<-AperturaBitcoin[1:(ntrain)]
+FechaBitcoin<-rev(Fecha)
+FechaBitcoin<-FechaBitcoin[1:(ntrain)]
+
+library(TSstudio)
+library(xts)
+library(tsibble)
+library(timetk)
+ts_Bitcoin<-ts((AperturaBitcoin), start<-c(2020,01,01),frequency = 365)
+df_Bitcoin=data.frame(Apertura=rev(Datos_históricos_Bitcoin$Apertura),Fecha=rev(Datos_históricos_Bitcoin$`ï»¿"Fecha"`))
+tbl_Bitcoin=tibble(df_Bitcoin)# se crea un objeto tible
+tsbl_Bitcoin=as_tsibble(tbl_Bitcoin,index=Fecha) #se crea un objeto tsibble
+Bitcoin_xts<-xts(x=AperturaBitcoin,frequency = 365,order.by = FechaBitcoin)
+ts_info(Bitcoin_xts)
+plot(Bitcoin_xts,main = 'Bitcoin')
+
+```
+```{r serie de retornos}
+library(quantmod)
+library(PerformanceAnalytics)
+library(ggplot2)
+library(zoo)
+
+retorno<-diff(log(ts_Bitcoin))
+plot(retorno)
+retorno1<-na.omit(retorno)
+
+```
+```{r gráficas de autocorrelación}
+
+acf(retorno1,ci.type='ma')
+pacf(retorno1) 
+acf(retorno1^2)
+pacf(retorno1^2)
+
+
+```
+se ve que en la acf y pacf no hay autocorrelaciones significativas luego de los
+primeros rezagos, al igual que en las gráficas de los retornos al cuadrado, sin
+embargo ajustaremos un modelo para la media condicional para verificar si es posible ajustar un modelo ARCH.
+
+```{r Modelo para la media condicional}
+
+
+library(lmtest)
+library(fGarch)
+library(aTSA)
+library(forecast)
+modeloarima=stats::arima(retorno1,order = c(0,0,0),include.mean = FALSE)
+aTSA::arch.test(modeloarima)
+
+acf(modeloarima$residual)
+pacf(modeloarima$residual)
+acf(modeloarima$residual^2)
+pacf(modeloarima$residual^2)
+```
+
+Las pruebas para distintos numeros de retardos son significativas para el test de
+multiplicadores de Lagrange, por lo que ajustamos un modelo ARCH.
+
+```{r modelo para la volatilidad}
+modelo_bitcoin=garchFit(~arma(0,0)+garch(1,1),data=retorno1,trace=F,include.mean=F)
+summary(modelo_bitcoin) 
+
+```
+
+Se ajusta un modelo GARCH debido a que los criterios de información para un modelo
+ARCH y uno GARCH difieren bastante, además de problemas con la sifgnificancia de
+los parámetros.
+
+```{r}
+#plot(modelo_bitcoin)  ###Gráfico de volatilidad
+prediccion=predict(modelo_bitcoin,n.ahead=20)
+```
+
+```{r Modelo usando rugarch}
+
+library(rugarch)
+spec1=ugarchspec(variance.model=list(model="sGARCH",garchOrder = c(1,1)),
+                 mean.model=list(armaOrder=c(0,0),include.mean = FALSE),distribution.model = "norm")
+
+                           
+fit1=ugarchfit(data=retorno1,spec=spec1)
+show(fit1)
+
+
+#plot(fit1)
+forc1 = ugarchforecast(fit1, n.ahead = 20)  ###Predicción de la varianza condicional
+#plot(forc1)
+
+```
+El modelo parece estar bien ajustado. Esto lo comprobamos observando que los valores p para los parámetros de los modelos para la media y la varianza condicional no son significativos, es decir, no deben especificarse más parámetros para ninguno de ellos.
+
+
+
